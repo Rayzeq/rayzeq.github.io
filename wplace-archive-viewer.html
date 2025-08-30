@@ -59,7 +59,7 @@
 					get_chunk(x, y).then(img => {
 						context.save();
 						context.scale(zoom, zoom);
-						context.drawImage(img, x * 1000 - position[0], y * 1000 - position[1]);
+						context.drawImage(img, x * 1000 - position[0], y * 1000 - position[1], 1000.1, 1000.1);
 						context.restore();
 					});
 				}
