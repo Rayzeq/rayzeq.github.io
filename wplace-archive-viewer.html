@@ -53,21 +53,13 @@
 		const start = [x_sorted[0] * 1000, y_sorted[0] * 1000];
 		const end = [x_sorted[x_sorted.length - 1] * 1000, y_sorted[y_sorted.length - 1] * 1000];
 
-		let min_date = null;
-		let max_date = null;
-		for (let y = y_sorted[0]; y <= y_sorted[y_sorted.length - 1]; y++) {
-			for (let x = x_sorted[0]; x <= x_sorted[x_sorted.length - 1]; x++) {
-				const dates = await(await fetch(`https://wplace-archive.lila.ws/api/history/${x}/${y}`)).json();
-				if (min_date === null || dates[0] < min_date) min_date = dates[0];
-				if (max_date === null || dates[dates.length - 1] > max_date) max_date = dates[dates.length - 1];
-			}
-		}
-		min_date = to_local_date(min_date);
-		max_date = to_local_date(max_date);
+		const dates = await(await fetch(`https://wplace-archive.lila.ws/api/history/${x_sorted[0]}/${y_sorted[0]}`)).json();
+		const min_date = to_local_date(dates[0]);
+		const current_max_date = to_local_date(dates[dates.length - 1]);
 
 		// Archive date management
-		let selectedDate = to_basic_date(max_date);
-		let selectedHour = max_date.getHours().toString();
+		let selectedDate = to_basic_date(current_max_date);
+		let selectedHour = current_max_date.getHours().toString();
 
 		// Format date for URL (YYYY_MM_DD_HH)
 		function formatDateForURL(date, hour) {
@@ -256,7 +248,6 @@
 			// Set initial values
 			datePicker.value = selectedDate;
 			datePicker.min = to_basic_date(min_date);
-			datePicker.max = to_basic_date(max_date);
 			hourSlider.value = selectedHour;
 			updateHourDisplay(selectedHour);
 			updateDateTimeDisplay(selectedDate, selectedHour);
