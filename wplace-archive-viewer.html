@@ -25,6 +25,7 @@
 			if (cached === undefined) {
 				cache[`${x}-${y}-${date}`] = new Promise((resolve, reject) => {
 					const img = new Image();
+					img.crossOrigin = "anonymous";
 					img.addEventListener("load", () => {
 						cache[`${x}-${y}-${date}`] = img;
 						resolve(img);
@@ -120,17 +121,31 @@
 		let last_touch_pos = null;
 
 		// Mouse events (desktop)
-		canvas.addEventListener("mousedown", () => {
-			is_dragging = true;
+		canvas.addEventListener("mousedown", (event) => {
+			if (screenshotMode) {
+				startScreenshotSelection(event);
+			} else {
+				is_dragging = true;
+			}
 		});
 		canvas.addEventListener("mouseup", () => {
-			is_dragging = false;
+			if (screenshotMode) {
+				endScreenshotSelection();
+			} else {
+				is_dragging = false;
+			}
 		});
 		canvas.addEventListener("mouseleave", () => {
-			is_dragging = false;
+			if (screenshotMode) {
+				endScreenshotSelection();
+			} else {
+				is_dragging = false;
+			}
 		})
 		canvas.addEventListener("mousemove", event => {
-			if (is_dragging) {
+			if (screenshotMode && isSelectingScreenshot) {
+				updateScreenshotSelection(event);
+			} else if (is_dragging) {
 				position[0] -= event.movementX * (1 / zoom);
 				position[1] -= event.movementY * (1 / zoom);
 				position[0] = Math.max(start[0], Math.min(end[0] - canvas.width * (1 / zoom), position[0]));
@@ -143,20 +158,30 @@
 		// Touch events (mobile)
 		canvas.addEventListener("touchstart", event => {
 			event.preventDefault();
-			is_dragging = true;
-			const touch = event.touches[0];
-			last_touch_pos = { x: touch.clientX, y: touch.clientY };
+			if (screenshotMode) {
+				// Not implementing touch for screenshot for simplicity
+			} else {
+				is_dragging = true;
+				const touch = event.touches[0];
+				last_touch_pos = { x: touch.clientX, y: touch.clientY };
+			}
 		});
 
 		canvas.addEventListener("touchend", event => {
 			event.preventDefault();
-			is_dragging = false;
-			last_touch_pos = null;
+			if (screenshotMode) {
+				// Not implementing touch for screenshot for simplicity
+			} else {
+				is_dragging = false;
+				last_touch_pos = null;
+			}
 		});
 
 		canvas.addEventListener("touchmove", event => {
 			event.preventDefault();
-			if (is_dragging && last_touch_pos && event.touches.length === 1) {
+			if (screenshotMode) {
+				// Not implementing touch for screenshot for simplicity
+			} else if (is_dragging && last_touch_pos && event.touches.length === 1) {
 				const touch = event.touches[0];
 				const movementX = touch.clientX - last_touch_pos.x;
 				const movementY = touch.clientY - last_touch_pos.y;
@@ -174,6 +199,11 @@
 		}, { passive: false });
 
 		canvas.addEventListener("wheel", event => {
+			if (screenshotMode) {
+				// Disable zoom in screenshot mode
+				return;
+			}
+
 			let deltaY = event.deltaY;
 			if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaY *= 16;
 
@@ -210,6 +240,208 @@
 
 		paint();
 
+		// ========================= Screenshot Tool =========================
+		let screenshotMode = false;
+		let isSelectingScreenshot = false;
+		let screenshotStartX = 0;
+		let screenshotStartY = 0;
+		let screenshotEndX = 0;
+		let screenshotEndY = 0;
+		let selectionRectangle = null;
+
+		// Toggle screenshot mode
+		function toggleScreenshotMode() {
+			screenshotMode = !screenshotMode;
+
+			if (screenshotMode) {
+				document.getElementById('screenshotTool').classList.add('active');
+				document.getElementById('screenshotBtn').innerHTML = '<i class="fas fa-times"></i>';
+				document.getElementById('screenshotBtn').title = "Cancel Screenshot";
+				canvas.style.cursor = "crosshair";
+			} else {
+				document.getElementById('screenshotTool').classList.remove('active');
+				document.getElementById('screenshotBtn').innerHTML = '<i class="fas fa-camera"></i>';
+				document.getElementById('screenshotBtn').title = "Take Screenshot";
+				canvas.style.cursor = "default";
+
+				// Remove selection rectangle if exists
+				if (selectionRectangle) {
+					selectionRectangle.remove();
+					selectionRectangle = null;
+				}
+
+				isSelectingScreenshot = false;
+			}
+		}
+
+		// Start screenshot selection
+		function startScreenshotSelection(event) {
+			isSelectingScreenshot = true;
+
+			const rect = canvas.getBoundingClientRect();
+			screenshotStartX = event.clientX - rect.left;
+			screenshotStartY = event.clientY - rect.top;
+
+			// Create selection rectangle
+			if (selectionRectangle) {
+				selectionRectangle.remove();
+			}
+
+			selectionRectangle = document.createElement('div');
+			selectionRectangle.className = 'selection-rectangle';
+			selectionRectangle.style.left = screenshotStartX + 'px';
+			selectionRectangle.style.top = screenshotStartY + 'px';
+			selectionRectangle.style.width = '0px';
+			selectionRectangle.style.height = '0px';
+
+			document.body.appendChild(selectionRectangle);
+		}
+
+		// Update screenshot selection
+		function updateScreenshotSelection(event) {
+			if (!isSelectingScreenshot) return;
+
+			const rect = canvas.getBoundingClientRect();
+			screenshotEndX = event.clientX - rect.left;
+			screenshotEndY = event.clientY - rect.top;
+
+			const left = Math.min(screenshotStartX, screenshotEndX);
+			const top = Math.min(screenshotStartY, screenshotEndY);
+			const width = Math.abs(screenshotEndX - screenshotStartX);
+			const height = Math.abs(screenshotEndY - screenshotStartY);
+
+			selectionRectangle.style.left = left + 'px';
+			selectionRectangle.style.top = top + 'px';
+			selectionRectangle.style.width = width + 'px';
+			selectionRectangle.style.height = height + 'px';
+
+			// Update info display
+			document.getElementById('screenshotInfo').textContent =
+				`Selection: ${Math.round(width * (1 / zoom))}×${Math.round(height * (1 / zoom))} pixels`;
+		}
+
+		// End screenshot selection
+		function endScreenshotSelection() {
+			if (!isSelectingScreenshot) return;
+
+			isSelectingScreenshot = false;
+
+			// Ensure we have a valid selection
+			const width = Math.abs(screenshotEndX - screenshotStartX);
+			const height = Math.abs(screenshotEndY - screenshotStartY);
+
+			if (width < 10 || height < 10) {
+				// Selection too small, remove it
+				if (selectionRectangle) {
+					selectionRectangle.remove();
+					selectionRectangle = null;
+				}
+				return;
+			}
+		}
+
+		// Download the selected region
+		async function downloadScreenshot() {
+			if (!selectionRectangle) return;
+
+			// Calculate the actual pixel coordinates (not zoomed)
+			const left = parseInt(selectionRectangle.style.left);
+			const top = parseInt(selectionRectangle.style.top);
+			const width = parseInt(selectionRectangle.style.width);
+			const height = parseInt(selectionRectangle.style.height);
+
+			// Convert screen coordinates to world coordinates
+			const worldX = position[0] + (left * (1 / zoom));
+			const worldY = position[1] + (top * (1 / zoom));
+			const worldWidth = width * (1 / zoom);
+			const worldHeight = height * (1 / zoom);
+
+			// Create an offscreen canvas with the actual pixel dimensions
+			const screenshotCanvas = document.createElement('canvas');
+			screenshotCanvas.width = Math.round(worldWidth);
+			screenshotCanvas.height = Math.round(worldHeight);
+			const screenshotCtx = screenshotCanvas.getContext('2d');
+			screenshotCtx.imageSmoothingEnabled = false;
+
+			// Determine which chunks we need to capture
+			const minChunkX = Math.floor(worldX / 1000);
+			const minChunkY = Math.floor(worldY / 1000);
+			const maxChunkX = Math.floor((worldX + worldWidth) / 1000);
+			const maxChunkY = Math.floor((worldY + worldHeight) / 1000);
+
+			const formattedDate = formatDateForURL(selectedDate, selectedHour);
+
+			// Draw each chunk that intersects with our selection
+			for (let chunkY = minChunkY; chunkY <= maxChunkY; chunkY++) {
+				for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+					try {
+						const chunkImg = await get_chunk(chunkX, chunkY, formattedDate);
+
+						// Calculate the position of this chunk relative to our selection
+						const chunkWorldX = chunkX * 1000;
+						const chunkWorldY = chunkY * 1000;
+
+						// Calculate the intersection between the chunk and our selection
+						const sourceX = Math.max(0, worldX - chunkWorldX);
+						const sourceY = Math.max(0, worldY - chunkWorldY);
+						const sourceWidth = Math.min(1000 - sourceX, (worldX + worldWidth) - (chunkWorldX + sourceX));
+						const sourceHeight = Math.min(1000 - sourceY, (worldY + worldHeight) - (chunkWorldY + sourceY));
+
+						// Calculate where to draw this part in our screenshot canvas
+						const destX = chunkWorldX + sourceX - worldX;
+						const destY = chunkWorldY + sourceY - worldY;
+
+						// Draw the portion of the chunk that's in our selection
+						screenshotCtx.drawImage(
+							chunkImg,
+							sourceX, sourceY, sourceWidth, sourceHeight,
+							destX, destY, sourceWidth, sourceHeight
+						);
+					} catch (e) {
+						// Draw error pattern for missing chunks
+						const chunkWorldX = chunkX * 1000;
+						const chunkWorldY = chunkY * 1000;
+
+						const sourceX = Math.max(0, worldX - chunkWorldX);
+						const sourceY = Math.max(0, worldY - chunkWorldY);
+						const sourceWidth = Math.min(1000 - sourceX, (worldX + worldWidth) - (chunkWorldX + sourceX));
+						const sourceHeight = Math.min(1000 - sourceY, (worldY + worldHeight) - (chunkWorldY + sourceY));
+
+						const destX = chunkWorldX + sourceX - worldX;
+						const destY = chunkWorldY + sourceY - worldY;
+
+						// Draw the error pattern
+						screenshotCtx.fillStyle = "#fb3ef9";
+						screenshotCtx.fillRect(destX, destY, sourceWidth / 2, sourceHeight / 2);
+						screenshotCtx.fillRect(destX + sourceWidth / 2, destY + sourceHeight / 2, sourceWidth / 2, sourceHeight / 2);
+
+						screenshotCtx.fillStyle = "#000000";
+						screenshotCtx.fillRect(destX + sourceWidth / 2, destY, sourceWidth / 2, sourceHeight / 2);
+						screenshotCtx.fillRect(destX, destY + sourceHeight / 2, sourceWidth / 2, sourceHeight / 2);
+					}
+				}
+			}
+
+			// Create download link
+			const link = document.createElement('a');
+			link.download = `wplace-screenshot-${selectedDate}-${selectedHour}.png`;
+			link.href = screenshotCanvas.toDataURL('image/png');
+			document.body.appendChild(link);
+			link.click();
+			document.body.removeChild(link);
+
+			// Exit screenshot mode
+			toggleScreenshotMode();
+		}
+
+		// Cancel screenshot
+		function cancelScreenshot() {
+			toggleScreenshotMode();
+		}
+
+		document.getElementById("downloadScreenshot").addEventListener("click", downloadScreenshot);
+		document.getElementById("cancelScreenshot").addEventListener("click", cancelScreenshot);
+
 		// ========================= Controls =========================
 		// Update the display of current date and time
 		function updateDateTimeDisplay(dateStr, hour) {
@@ -244,6 +476,7 @@
 			const compactHeader = document.getElementById('compactHeader');
 			const collapseBtn = document.getElementById('collapseBtn');
 			const controlsContent = document.getElementById('controlsContent');
+			const screenshotBtn = document.getElementById('screenshotBtn');
 
 			// Set initial values
 			datePicker.value = selectedDate;
@@ -329,6 +562,10 @@
 
 			compactHeader.addEventListener('click', function() {
 				toggleCollapse();
+			});
+
+			screenshotBtn.addEventListener('click', function() {
+				toggleScreenshotMode();
 			});
 
 			function toggleCollapse() {
@@ -418,6 +655,23 @@
 						<div class="hour-display" id="hourDisplay">12:00</div>
 					</div>
 				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Screenshot Tool -->
+	<button class="screenshot-btn" id="screenshotBtn" title="Take Screenshot">
+		<i class="fas fa-camera"></i>
+	</button>
+
+	<div class="screenshot-tool" id="screenshotTool">
+		<div class="screenshot-controls">
+			<div class="screenshot-info" id="screenshotInfo">
+				Drag to select a region
+			</div>
+			<div class="screenshot-btns">
+				<button id="downloadScreenshot">Download</button>
+				<button id="cancelScreenshot">Cancel</button>
 			</div>
 		</div>
 	</div>
