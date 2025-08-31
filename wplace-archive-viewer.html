@@ -6,23 +6,35 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>Wplace Archive Viewer</title>
 	<link rel="stylesheet" href="/wplace-archive-viewer.css">
+	<link rel="stylesheet" href="https://site-assets.fontawesome.com/releases/v6.7.2/css/all.css">
 
 	<script type="module">
+		function to_local_date(date) {
+			const day = date.slice(0, 10).replaceAll("_", "-");
+			const hour = date.slice(11, 13);
+			return new Date(`${day} ${hour}:00 UTC`);
+		}
+
+		function to_basic_date(date) {
+			return `${date.getFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+		}
+
 		const cache = {};
-		async function get_chunk(x, y) {
-			const cached = cache[`${x}-${y}`];
+		async function get_chunk(x, y, date) {
+			const cached = cache[`${x}-${y}-${date}`];
 			if (cached === undefined) {
-				cache[`${x}-${y}`] = new Promise((resolve, _reject) => {
+				cache[`${x}-${y}-${date}`] = new Promise((resolve, reject) => {
 					const img = new Image();
 					img.addEventListener("load", () => {
-						cache[`${x}-${y}`] = img;
+						cache[`${x}-${y}-${date}`] = img;
 						resolve(img);
 					});
-					img.src = `https://wplace-archive.lila.ws/${x}/${y}/2025_08_29_12.webp`;
+					img.addEventListener("error", () => reject());
+					img.src = `https://wplace-archive.lila.ws/${x}/${y}/${date}.webp`;
 				});
-				return await cache[`${x}-${y}`];
+				return await cache[`${x}-${y}-${date}`];
 			} else if (cached instanceof Promise) {
-				return await cache[`${x}-${y}`];
+				return await cache[`${x}-${y}-${date}`];
 			} else {
 				return cached;
 			}
@@ -36,10 +48,36 @@
 
 		const chunks = await(await fetch("https://wplace-archive.lila.ws/api/chunks")).json();
 
-		const x_sorted = chunks.map(x => x[0] * 1000).toSorted();
-		const y_sorted = chunks.map(x => x[1] * 1000).toSorted();
-		const start = [x_sorted[0], y_sorted[0]];
-		const end = [x_sorted[x_sorted.length - 1], y_sorted[y_sorted.length - 1]];
+		const x_sorted = chunks.map(x => x[0]).toSorted();
+		const y_sorted = chunks.map(x => x[1]).toSorted();
+		const start = [x_sorted[0] * 1000, y_sorted[0] * 1000];
+		const end = [x_sorted[x_sorted.length - 1] * 1000, y_sorted[y_sorted.length - 1] * 1000];
+
+		let min_date = null;
+		let max_date = null;
+		for (let y = y_sorted[0]; y <= y_sorted[y_sorted.length - 1]; y++) {
+			for (let x = x_sorted[0]; x <= x_sorted[x_sorted.length - 1]; x++) {
+				const dates = await(await fetch(`https://wplace-archive.lila.ws/api/history/${x}/${y}`)).json();
+				if (min_date === null || dates[0] < min_date) min_date = dates[0];
+				if (max_date === null || dates[dates.length - 1] > max_date) max_date = dates[dates.length - 1];
+			}
+		}
+		min_date = to_local_date(min_date);
+		max_date = to_local_date(max_date);
+
+		// Archive date management
+		let selectedDate = to_basic_date(max_date);
+		let selectedHour = max_date.getHours().toString();
+
+		// Format date for URL (YYYY_MM_DD_HH)
+		function formatDateForURL(date, hour) {
+			const dateObj = new Date(`${date} ${hour}:00`);
+			const year = dateObj.getUTCFullYear();
+			const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+			const day = String(dateObj.getUTCDate()).padStart(2, '0');
+			const formattedHour = String(dateObj.getUTCHours()).padStart(2, '0');
+			return `${year}_${month}_${day}_${formattedHour}`;
+		}
 
 		const position = start.slice();
 		let zoom = 0.5;
@@ -55,15 +93,37 @@
 
 			for (let y = min_chunk[1]; y <= max_chunk[1]; y++) {
 				for (let x = min_chunk[0]; x <= max_chunk[0]; x++) {
-					get_chunk(x, y).then(img => {
+					const formattedDate = formatDateForURL(selectedDate, selectedHour);
+					const pixel_x = x * 1000 - position[0];
+					const pixel_y = y * 1000 - position[1];
+
+					get_chunk(x, y, formattedDate).then(img => {
 						context.save();
 						context.scale(zoom, zoom);
-						context.drawImage(img, x * 1000 - position[0], y * 1000 - position[1], 1000.1, 1000.1);
+						context.drawImage(img, pixel_x, pixel_y, 1000.1, 1000.1);
+						context.restore();
+					}, () => {
+						context.save();
+						context.scale(zoom, zoom);
+
+						context.fillStyle = "#fb3ef9";
+						context.beginPath();
+						context.rect(pixel_x, pixel_y, 500, 500);
+						context.rect(pixel_x + 500, pixel_y + 500, 500, 500);
+						context.fill();
+
+						context.fillStyle = "#000000";
+						context.beginPath();
+						context.rect(pixel_x + 500, pixel_y, 500, 500);
+						context.rect(pixel_x, pixel_y + 500, 500, 500);
+						context.fill();
+
 						context.restore();
 					});
 				}
 			}
 		}
+
 		let is_dragging = false;
 		let last_touch_pos = null;
 
@@ -155,12 +215,221 @@
 			context.imageSmoothingEnabled = false;
 			paint();
 		});
+
 		paint();
+
+		// ========================= Controls =========================
+		// Update the display of current date and time
+		function updateDateTimeDisplay(dateStr, hour) {
+			const date = new Date(dateStr);
+			const formattedDate = date.toLocaleDateString(undefined, {
+				year: 'numeric',
+				month: 'short',
+				day: 'numeric'
+			});
+
+			const timeStr = `${hour.toString().padStart(2, '0')}:00`;
+
+			document.getElementById('currentDate').textContent = formattedDate;
+			document.getElementById('currentTime').textContent = timeStr;
+		}
+
+		// Update the archive view
+		function updateArchiveView() {
+			context.clearRect(0, 0, canvas.width, canvas.height);
+			paint();
+		}
+
+		// Initialize archive controls
+		function initArchiveControls() {
+			const datePicker = document.getElementById('datePicker');
+			const hourSlider = document.getElementById('hourSlider');
+			const hourDisplay = document.getElementById('hourDisplay');
+			const prevDayBtn = document.getElementById('prevDay');
+			const prevHourBtn = document.getElementById('prevHour');
+			const nextHourBtn = document.getElementById('nextHour');
+			const nextDayBtn = document.getElementById('nextDay');
+			const compactHeader = document.getElementById('compactHeader');
+			const collapseBtn = document.getElementById('collapseBtn');
+			const controlsContent = document.getElementById('controlsContent');
+
+			// Set initial values
+			datePicker.value = selectedDate;
+			datePicker.min = to_basic_date(min_date);
+			datePicker.max = to_basic_date(max_date);
+			hourSlider.value = selectedHour;
+			updateHourDisplay(selectedHour);
+			updateDateTimeDisplay(selectedDate, selectedHour);
+
+			// Collapse state
+			let isCollapsed = false;
+
+			// Update hour display
+			function updateHourDisplay(hour) {
+				hourDisplay.textContent = `${hour.toString().padStart(2, '0')}:00`;
+			}
+
+			// Event listeners
+			datePicker.addEventListener('change', function() {
+				selectedDate = this.value;
+				updateDateTimeDisplay(selectedDate, parseInt(hourSlider.value));
+				updateArchiveView();
+			});
+
+			hourSlider.addEventListener('input', function() {
+				const hour = parseInt(this.value);
+				updateHourDisplay(hour);
+				selectedHour = hour;
+				updateDateTimeDisplay(selectedDate, hour);
+				updateArchiveView();
+			});
+
+			prevDayBtn.addEventListener('click', function() {
+				const date = new Date(selectedDate);
+				date.setDate(date.getDate() - 1);
+				selectedDate = date.toISOString().split('T')[0];
+				datePicker.value = selectedDate;
+				updateDateTimeDisplay(selectedDate, parseInt(hourSlider.value));
+				updateArchiveView();
+			});
+
+			nextDayBtn.addEventListener('click', function() {
+				const date = new Date(selectedDate);
+				date.setDate(date.getDate() + 1);
+				selectedDate = date.toISOString().split('T')[0];
+				datePicker.value = selectedDate;
+				updateDateTimeDisplay(selectedDate, parseInt(hourSlider.value));
+				updateArchiveView();
+			});
+
+			prevHourBtn.addEventListener('click', function() {
+				let newHour = parseInt(hourSlider.value) - 1;
+				if (newHour < 0) {
+					newHour = 23;
+					// Also go to previous day
+					const date = new Date(selectedDate);
+					date.setDate(date.getDate() - 1);
+					selectedDate = date.toISOString().split('T')[0];
+					datePicker.value = selectedDate;
+				}
+				hourSlider.value = newHour;
+				updateHourDisplay(newHour);
+				selectedHour = newHour;
+				updateDateTimeDisplay(selectedDate, newHour);
+				updateArchiveView();
+			});
+
+			nextHourBtn.addEventListener('click', function() {
+				let newHour = parseInt(hourSlider.value) + 1;
+				if (newHour > 23) {
+					newHour = 0;
+					// Also go to next day
+					const date = new Date(selectedDate);
+					date.setDate(date.getDate() + 1);
+					selectedDate = date.toISOString().split('T')[0];
+					datePicker.value = selectedDate;
+				}
+				hourSlider.value = newHour;
+				updateHourDisplay(newHour);
+				selectedHour = newHour;
+				updateDateTimeDisplay(selectedDate, newHour);
+				updateArchiveView();
+			});
+
+			compactHeader.addEventListener('click', function() {
+				toggleCollapse();
+			});
+
+			function toggleCollapse() {
+				isCollapsed = !isCollapsed;
+
+				if (isCollapsed) {
+					controlsContent.classList.add('collapsed');
+					collapseBtn.innerHTML = '<i class="fas fa-chevron-up"></i>';
+					collapseBtn.title = "Expand controls";
+				} else {
+					controlsContent.classList.remove('collapsed');
+					collapseBtn.innerHTML = '<i class="fas fa-chevron-down"></i>';
+					collapseBtn.title = "Collapse controls";
+				}
+			}
+
+			// Auto-hide controls when mouse is idle
+			let hideTimeout;
+			document.addEventListener('mousemove', resetHideTimeout);
+
+			function resetHideTimeout() {
+				clearTimeout(hideTimeout);
+				controls.classList.remove('hidden');
+				hideTimeout = setTimeout(() => {
+					if (isCollapsed) {
+						controls.classList.add('hidden');
+					}
+				}, 3000);
+			}
+
+			// Initialize auto-hide functionality
+			resetHideTimeout();
+		}
+		// Initialize archive controls
+		initArchiveControls();
 	</script>
 </head>
 
 <body>
 	<canvas id="drawing_canvas"></canvas>
+	<div class="controls-overlay auto-hide" id="controls">
+		<div class="compact-header" id="compactHeader">
+			<div class="header-content">
+				<div class="date-display" id="currentDate">Loading...</div>
+				<div class="time-display" id="currentTime">Loading...</div>
+			</div>
+			<button class="collapse-btn" id="collapseBtn" title="Collapse controls">
+				<i class="fas fa-chevron-down"></i>
+			</button>
+		</div>
+
+		<div class="controls-content" id="controlsContent">
+			<div class="navigation">
+				<button class="nav-btn" id="prevDay" title="Previous Day">
+					<i class="fas fa-chevron-double-left"></i> Day
+				</button>
+				<button class="nav-btn" id="prevHour" title="Previous Hour">
+					<i class="fas fa-chevron-left"></i> Hour
+				</button>
+				<button class="nav-btn" id="nextHour" title="Next Hour">
+					Hour <i class="fas fa-chevron-right"></i>
+				</button>
+				<button class="nav-btn" id="nextDay" title="Next Day">
+					Day <i class="fas fa-chevron-double-right"></i>
+				</button>
+			</div>
+
+			<div class="date-selectors">
+				<div class="date-selector">
+					<label for="datePicker"><i class="fas fa-calendar-alt"></i> Date:</label>
+					<input type="date" id="datePicker">
+				</div>
+
+				<div class="hour-slider-container">
+					<label><i class="fas fa-clock"></i> Hour:</label>
+					<div class="hour-slider-wrapper">
+						<div class="hour-slider-wrapper-inner">
+							<input type="range" min="0" max="23" value="12" class="hour-slider" id="hourSlider">
+							<div class="hour-ticks">
+								<span>0</span>
+								<span>6</span>
+								<span>12</span>
+								<span>18</span>
+								<span>23</span>
+							</div>
+						</div>
+						<div class="hour-display" id="hourDisplay">12:00</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
 </body>
 
 </html>
