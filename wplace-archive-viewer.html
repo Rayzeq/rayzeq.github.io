@@ -35,7 +35,7 @@
 				});
 				return await cache[`${x}-${y}-${date}`];
 			} else if (cached instanceof Promise) {
-				return await cache[`${x}-${y}-${date}`];
+				return await cached;
 			} else {
 				return cached;
 			}
@@ -249,6 +249,18 @@
 		let screenshotEndY = 0;
 		let selectionRectangle = null;
 
+		// Function to snap coordinates to pixel grid
+		function snapToPixelGrid(coord, position) {
+			// Calculate the size of a displayed pixel in screen coordinates
+			const pixelSize = Math.max(1, zoom);
+
+			const shift = (position % 1) * zoom;
+			const screen_aligned = Math.round((coord + shift) / pixelSize) * pixelSize;
+
+			// Snap to the pixel grid
+			return Math.round(screen_aligned - shift);
+		}
+
 		// Toggle screenshot mode
 		function toggleScreenshotMode() {
 			screenshotMode = !screenshotMode;
@@ -279,8 +291,8 @@
 			isSelectingScreenshot = true;
 
 			const rect = canvas.getBoundingClientRect();
-			screenshotStartX = event.clientX - rect.left;
-			screenshotStartY = event.clientY - rect.top;
+			screenshotStartX = snapToPixelGrid(event.clientX - rect.left, position[0]);
+			screenshotStartY = snapToPixelGrid(event.clientY - rect.top, position[1]);
 
 			// Create selection rectangle
 			if (selectionRectangle) {
@@ -302,8 +314,8 @@
 			if (!isSelectingScreenshot) return;
 
 			const rect = canvas.getBoundingClientRect();
-			screenshotEndX = event.clientX - rect.left;
-			screenshotEndY = event.clientY - rect.top;
+			screenshotEndX = snapToPixelGrid(event.clientX - rect.left, position[0]);
+			screenshotEndY = snapToPixelGrid(event.clientY - rect.top, position[1]);
 
 			const left = Math.min(screenshotStartX, screenshotEndX);
 			const top = Math.min(screenshotStartY, screenshotEndY);
